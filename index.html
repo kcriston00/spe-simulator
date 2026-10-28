@@ -1276,7 +1276,7 @@ function renderHallway() {
           <label class="toggle"><input type="checkbox" id="setLand" ${settings.showLandmarks ? "checked" : ""}> Show landmark hints on body maps</label>
           <label class="toggle"><input type="checkbox" id="setPaste" ${settings.blockPaste ? "checked" : ""}> Block paste in SOAP note (like the real SPE)</label>
           <label class="toggle"><input type="checkbox" id="setHands" ${settings.handsFree ? "checked" : ""}> Hands-free voice (hosted link only): keep listening after each patient answer</label>
-          <div class="row" style="grid-column:1/-1"><label class="lbl" for="setBrain">Patient brain</label>
+          <div class="row" style="grid-column:1/-1" ${(window.claude && window.claude.use) ? "" : "hidden"}><label class="lbl" for="setBrain">Patient brain</label>
             <select id="setBrain"><option value="hybrid" ${settings.brain === "hybrid" ? "selected" : ""}>Script first, Claude for anything unrecognized</option><option value="script" ${settings.brain === "script" ? "selected" : ""}>Script only (instant, free)</option><option value="claude" ${settings.brain === "claude" ? "selected" : ""}>Claude plays the patient for every line (most natural, uses your Claude usage)</option></select>
             <small class="muted" id="brainNote"></small></div>
         </div>
@@ -1479,6 +1479,8 @@ async function studentSays(text, extra) {
   ptSay(local.reply || scriptedUnknown(text, c));
 }
 function scriptedUnknown(text, c) {
+  const kw = keywordIntents(normalizeText(text));
+  if (kw.length) { const label = { pmh: "my medical history", meds_rx: "my medications", all_med: "allergies", tobacco: "smoking", alcohol: "drinking", fh_mother: "my family", ros_sob: "my breathing", ros_chestpain: "the chest pain", character: "what it feels like", onset: "when it started", location: "where it is" }[kw[0][0]]; if (label) return `Sorry — are you asking about ${label}?`; }
   if (/\?$/.test(text.trim()) || /\b(do|did|does|have|has|are|is|any|when|where|what|how|why)\b/i.test(text)) return c.look.distress >= 3 ? "I... don't follow. Sorry." : "I'm not sure what you mean. Could you ask that a different way?";
   return c.look.distress >= 3 ? "Okay." : "Okay.";
 }
@@ -1564,7 +1566,7 @@ const INTENTS = [
   ["ros_weight", /\bweight|lost (any )?pounds|gained (any )?pounds|losing weight|gaining weight/i],
   ["ros_fatigue", /\b(fatigue|tired|energy|exhaust|run[- ]down|malaise|worn out)/i],
   ["ros_chestpain", /chest (pain|discomfort|pressure|tightness|hurt)|pain in (your|the) chest|chest hurt/i],
-  ["ros_palpitations", /palpitation|heart (been |is |feels? )?(racing|race|pounding|flutter|skip|beating (fast|quick|hard|funny))|racing heart|irregular heart|heart rate feel/i],
+  ["ros_palpitations", /palpitation|heart (been |is |feels? |ever |sometimes )?(racing|race|pounding|flutter|skip|beating (fast|quick|hard|funny))|racing heart|irregular heart|heart rate feel/i],
   ["ros_orthopnea", /\b(orthopnea|lie flat|lying flat|lay flat|laying flat|how many pillows|pillows|sleep (flat|propped|sitting|upright)|breathe lying down|breathing (when|while) (you )?(lie|lying))/i],
   ["ros_pnd", /\b(wake(s|n)? up[^?]*(breath|gasp|short)|gasping|wake[^?]*(night|middle of the night)[^?]*(breath|gasp)|\bpnd\b|paroxysmal)/i],
   ["ros_edema", /\b(swelling|swollen|edema|puffy|ankles?\b|feet swell|legs? swell|swell(ing)? in your (legs|feet|ankles))/i],
@@ -1606,10 +1608,111 @@ const INTENT_IDS = new Set([...INTENTS.map(x => x[0]), "all_food", "all_env", "a
 const ROS_IDS = ["ros_fever", "ros_chills", "ros_nightsweats", "ros_sweat", "ros_weight", "ros_fatigue", "ros_chestpain", "ros_palpitations", "ros_orthopnea", "ros_pnd", "ros_edema", "ros_syncope", "ros_dizzy", "ros_sob", "ros_cough", "ros_sputum", "ros_hemoptysis", "ros_wheeze", "ros_abdpain", "ros_nausea", "ros_bowel", "ros_appetite", "ros_rash", "ros_neuro", "ros_urinary", "ros_travel", "ros_legpain", "ros_anxiety", "ros_sleep", "ros_headache"];
 const ROS_SYSTEM = { Cons: ["ros_fever", "ros_chills", "ros_nightsweats", "ros_sweat", "ros_weight", "ros_fatigue"], CV: ["ros_chestpain", "ros_palpitations", "ros_orthopnea", "ros_pnd", "ros_edema", "ros_syncope", "ros_dizzy", "ros_legpain"], Resp: ["ros_sob", "ros_cough", "ros_sputum", "ros_hemoptysis", "ros_wheeze"], GI: ["ros_abdpain", "ros_nausea", "ros_bowel", "ros_appetite"], Skin: ["ros_rash"], Neuro: ["ros_neuro", "ros_headache"], GU: ["ros_urinary"], Psych: ["ros_anxiety", "ros_sleep"] };
 
+// Second-tier matcher: keyword scoring for phrasings the patterns miss (dictation, no punctuation, odd wording).
+const KEYWORDS = {
+  name_dob: ["your name", "full name", "birthday", "birth date", "date of birth", "how old", "your age", "born"],
+  consent: ["permission", "consent", "okay with you", "ok with you", "alright with you", "mind if", "may i", "is it okay if i", "is it ok if i"],
+  cc: ["bring you in", "brings you", "here today", "here for", "come in today", "reason you", "what happened", "going on with you", "what's wrong", "whats wrong", "main concern", "main problem", "chief complaint", "bothering you", "see us today", "visit today"],
+  other_concerns: ["anything else", "something else", "other concern", "other problem", "other issue", "other symptom", "also going on", "else bothering", "else today"],
+  agenda: ["plan for today", "today we", "today i", "going to ask", "few questions", "then examine", "then do an exam", "then listen", "heart and lung exam", "ask you some questions"],
+  onset: ["when did", "when it started", "how long ago", "first start", "first began", "first notice", "start happening", "since when", "how long have", "how long has", "begin"],
+  location: ["where", "which side", "what part", "point to", "exact spot", "located"],
+  duration: ["how long does it last", "how long do they last", "last for", "how long each", "how long is each", "minutes or hours", "goes on for", "how long it lasts"],
+  character: ["describe", "feel like", "what kind of", "what type of", "sharp", "dull", "burning", "pressure", "stabbing", "squeezing", "aching", "throbbing", "tight", "crushing", "quality"],
+  alleviating: ["better", "relieve", "relief", "helps", "improve", "ease", "go away", "makes it go", "comfortable", "take it away", "calm it"],
+  aggravating: ["worse", "aggravate", "trigger", "bring it on", "brings it on", "sets it off", "flare", "make it bad"],
+  radiation: ["radiate", "travel", "spread", "move to", "go anywhere", "goes anywhere", "anywhere else", "shoot", "other places", "your arm", "your jaw", "your back", "your shoulder", "your neck", "go into", "go down", "go up"],
+  timing: ["constant", "intermittent", "come and go", "comes and goes", "all the time", "always there", "how often", "frequency", "time of day", "certain time", "at night", "morning", "evening", "episodes", "how many times"],
+  severity: ["scale", "out of ten", "out of 10", "one to ten", "1 to 10", "how bad", "how severe", "how intense", "how strong", "rate the", "rate your", "rate it", "severity", "pain level", "how much pain", "how much does it hurt"],
+  progression: ["getting worse", "getting better", "worsening", "improving", "same", "stable", "changed", "changing", "progress", "more often", "more frequent", "less often", "compared to"],
+  prior_episodes: ["before", "ever had", "in the past", "first time", "previous", "prior", "happened before", "similar", "like this before", "last time"],
+  context: ["what were you doing", "doing when", "at the time", "set it off", "started it", "anything new", "anything different", "anything unusual", "lead up", "leading up", "recently", "stress", "what happened before", "circumstances", "surrounding"],
+  associated: ["other symptoms", "associated", "along with", "at the same time", "go along", "accompany", "notice with it", "come with it", "symptoms with", "anything else when", "anything else with"],
+  pmh: ["medical condition", "medical problem", "health condition", "health problem", "medical history", "diagnosed", "chronic", "conditions", "diabetes", "blood pressure", "asthma", "heart problem", "heart disease", "thyroid", "been told", "any illness", "health issues", "medical issues", "past medical"],
+  psh: ["surgery", "surgeries", "operation", "procedure", "surgical"],
+  hosp: ["hospital", "hospitalized", "admitted", "emergency room", "er visit", "stayed overnight"],
+  injuries: ["injury", "injuries", "accident", "broken bone", "fracture", "trauma", "hurt yourself", "bad fall"],
+  meds_rx: ["medication", "medications", "medicine", "medicines", "meds", "prescription", "prescribed", "pills", "taking anything", "take anything", "what do you take", "on anything", "inhaler"],
+  meds_otc: ["over the counter", "otc", "tylenol", "ibuprofen", "advil", "aleve", "aspirin", "motrin", "pharmacy", "drugstore", "non prescription", "nonprescription"],
+  meds_supp: ["vitamin", "vitamins", "supplement", "supplements", "herbal", "herbs", "natural remedy", "fish oil", "protein powder"],
+  all_med: ["allergy", "allergies", "allergic", "reaction to"],
+  tobacco: ["smoke", "smoking", "smoker", "tobacco", "cigarette", "cigarettes", "vape", "vaping", "nicotine", "chew", "packs a day", "pack a day"],
+  alcohol: ["alcohol", "drink", "drinking", "beer", "wine", "liquor", "drinks a week", "drinks per"],
+  drugs: ["recreational", "illicit", "street drugs", "substances", "marijuana", "weed", "cocaine", "meth", "heroin", "drug use", "any drugs", "other drugs", "not prescribed"],
+  occupation: ["work", "job", "occupation", "employed", "for a living", "profession", "career", "what do you do"],
+  living: ["live with", "living situation", "who do you live", "at home with", "household", "live alone", "who's at home"],
+  diet: ["diet", "what do you eat", "eating habits", "nutrition", "meals", "how do you eat", "typical day eat"],
+  exercise: ["exercise", "work out", "workout", "physical activity", "physically active", "gym", "how active", "sports"],
+  sexual: ["sexually active", "sexual", "partner", "partners", "intercourse", "protection", "condom", "contraception", "birth control"],
+  fh_mother: ["mother", "mom", "moms", "mom's", "parents", "family history", "runs in the family", "run in your family", "family medical", "anyone in your family", "relatives"],
+  fh_father: ["father", "dad", "dads", "dad's", "parents", "family history", "runs in the family", "run in your family", "anyone in your family"],
+  fh_siblings: ["sibling", "siblings", "brother", "brothers", "sister", "sisters"],
+  fh_children: ["children", "kids", "son", "daughter"],
+  fh_extended: ["aunt", "uncle", "cousin", "grandparent", "grandfather", "grandmother", "grandpa", "grandma", "extended family", "anyone else in your family"],
+  ros_fever: ["fever", "fevers", "temperature", "febrile", "running hot", "feel hot"],
+  ros_chills: ["chills", "chill", "rigors", "shaking", "shivering", "teeth chattering"],
+  ros_nightsweats: ["night sweats", "sweat at night", "sweating at night", "drenching", "soak the sheets"],
+  ros_sweat: ["sweating", "sweaty", "sweat", "diaphoretic", "clammy", "perspiring"],
+  ros_weight: ["weight", "pounds", "losing weight", "gaining weight", "weight loss", "weight gain"],
+  ros_fatigue: ["fatigue", "tired", "energy", "exhausted", "run down", "malaise", "worn out", "weak all over"],
+  ros_chestpain: ["chest pain", "chest discomfort", "chest pressure", "chest tightness", "chest hurt", "pain in your chest"],
+  ros_palpitations: ["palpitations", "racing", "pounding", "fluttering", "flutter", "skipping", "skip a beat", "heart beating fast", "heartbeat", "irregular heart"],
+  ros_orthopnea: ["orthopnea", "lie flat", "lying flat", "lay flat", "laying flat", "pillows", "sleep flat", "sleep propped", "sleep sitting", "breathe lying down", "recliner"],
+  ros_pnd: ["wake up gasping", "gasping", "wake up short of breath", "wake up breathless", "middle of the night", "paroxysmal", "wake up at night"],
+  ros_edema: ["swelling", "swollen", "edema", "puffy", "ankles", "ankle swelling", "feet swell", "legs swell", "legs swollen", "feet swollen"],
+  ros_syncope: ["faint", "fainted", "fainting", "pass out", "passed out", "syncope", "black out", "blacked out", "lose consciousness"],
+  ros_dizzy: ["dizzy", "dizziness", "lightheaded", "light headed", "vertigo", "room spinning", "woozy"],
+  ros_sob: ["short of breath", "shortness of breath", "breathing hard", "trouble breathing", "difficulty breathing", "hard to breathe", "breathless", "winded", "catch your breath", "out of breath", "breathing okay", "breathing ok", "how is your breathing", "how's your breathing"],
+  ros_cough: ["cough", "coughing", "coughed"],
+  ros_sputum: ["sputum", "phlegm", "mucus", "bringing anything up", "coughing anything up", "productive", "what color", "bring up"],
+  ros_hemoptysis: ["cough up blood", "coughing up blood", "coughed up blood", "hemoptysis", "blood in your sputum", "blood when you cough", "bloody"],
+  ros_wheeze: ["wheeze", "wheezing", "wheezy", "whistling"],
+  ros_abdpain: ["abdominal pain", "belly pain", "stomach pain", "stomach ache", "stomachache", "belly ache", "tummy", "abdomen hurt", "belly hurt", "stomach hurt", "cramping in your stomach"],
+  ros_nausea: ["nausea", "nauseous", "nauseated", "vomit", "vomiting", "throw up", "throwing up", "threw up", "queasy", "sick to your stomach"],
+  ros_bowel: ["bowel", "bowels", "diarrhea", "constipation", "constipated", "stool", "stools", "bathroom habits", "poop"],
+  ros_appetite: ["appetite", "eating less", "eating well", "been eating", "hungry", "eating normally", "eating okay", "eating ok", "eating fine", "eating much", "eating"],
+  ros_rash: ["rash", "rashes", "skin changes", "bumps", "blisters", "blister", "lesion", "lesions", "sores", "spots", "hives", "itching", "itchy", "anything on your skin", "skin look"],
+  ros_neuro: ["numbness", "numb", "tingling", "tingle", "weakness", "weak", "pins and needles", "sensation", "burning sensation"],
+  ros_urinary: ["urinate", "urinating", "urination", "urine", "pee", "peeing", "bladder", "bathroom more", "bathroom less"],
+  ros_travel: ["travel", "traveled", "travelled", "trip", "flight", "flew", "flown", "plane", "vacation", "been anywhere", "out of town", "out of the country", "long drive", "long car ride"],
+  ros_legpain: ["leg pain", "calf", "calves", "leg hurt", "legs hurt", "leg sore", "leg cramp", "thigh"],
+  ros_anxiety: ["anxious", "anxiety", "worried", "stress", "stressed", "nervous", "scared", "mood", "depressed", "depression", "coping", "handling all this", "mental health"],
+  ros_sleep: ["sleeping", "sleep well", "how is your sleep", "how's your sleep", "insomnia", "sleep okay", "sleep ok"],
+  ros_headache: ["headache", "headaches", "head hurt", "migraine"],
+  vitals: ["blood pressure", "bp", "vitals", "vital signs", "pulse rate", "heart rate", "oxygen", "o2", "saturation", "sats", "your temp", "nurse take", "nurse say", "nurse said", "nurse get", "nurse got"],
+  gown_remove: ["lower your gown", "remove your gown", "take off your gown", "gown off", "untie your gown", "open your gown", "gown down", "lower the gown", "remove the gown", "take your shirt off", "shirt off", "listen on your skin", "directly on your skin", "help with your gown", "help you with the gown"],
+  gown_regown: ["gown back on", "put your gown back", "gown back up", "retie", "tie your gown", "tie the back", "cover back up", "cover you back up", "get dressed", "help you get dressed", "put it back on"],
+  hold_breath: ["hold your breath", "hold it for me", "stop breathing for a second", "don't breathe for"],
+  breathe_mouth: ["breathe in and out", "deep breath", "deep breaths", "through your mouth", "breathe normally", "breathe slowly", "breathe for me", "big breath"],
+  say_e: ["say e", "say the letter e", "say eee", "say ee"],
+  arm_up: ["raise your arm", "lift your arm", "arm up", "arm out", "arm to shoulder", "hold your arm", "put your arm", "arm to the side"],
+  socks_off: ["socks off", "take off your socks", "remove your socks", "shoes off", "take off your shoes", "remove your shoes", "socks and shoes"],
+  teach_back: ["understand", "make sense", "makes sense", "tell me back", "tell me what we", "repeat back", "in your own words", "any questions", "what questions", "is that clear", "explain back", "tell me the plan", "tell me what the plan"],
+  close: ["that concludes", "concludes our", "care team", "share this with", "the physician will", "be back shortly", "thank you for letting", "thanks for letting", "we're all done", "we are done", "that's everything", "wrap up", "be right back", "speak with the doctor", "get the doctor", "talk to the doctor"],
+  empathy: ["sorry", "that sounds", "i understand", "must be hard", "must be scary", "must be frightening", "must be difficult", "must be tough", "i can imagine", "i hear you", "that's scary", "that's frightening", "that's tough", "that's a lot", "take good care", "good hands", "i'm here", "we'll figure", "glad you came"],
+  ap_explain: ["i think", "my concern", "we need to", "i'd like to order", "i'd like to get", "i'd like to send", "i want to order", "i want to get", "i want to send", "you may have", "you might have", "you could have", "what's going on is", "i'm worried", "i'm concerned", "recommend", "the plan is", "we're going to", "ambulance", "emergency room", "the er", "the ed", "hospital", "x-ray", "xray", "ekg", "ecg", "blood test", "blood work", "bloodwork", "ct scan", "cat scan", "antibiotic", "antiviral", "start you on", "oxygen", "collapsed lung", "blood clot", "pneumonia", "shingles", "heart failure", "fluid in your lungs", "fluid on your lungs", "your heart", "costochondritis", "the flu", "influenza"],
+  smalltalk: ["how are you doing", "how are you feeling", "how are you today", "nice to meet you", "good morning", "good afternoon", "good evening", "hello", "hi", "hey"],
+  wash: ["wash my hands", "sanitize my hands", "clean my hands", "hand sanitizer", "sanitizing"],
+};
+function normalizeText(text) {
+  let t = " " + text.toLowerCase().replace(/[’‘]/g, "'").replace(/[^a-z0-9'\s/-]/g, " ") + " ";
+  const map = { " u ": " you ", " ur ": " your ", " r ": " are ", " ya ": " you ", " gonna ": " going to ", " wanna ": " want to ", " gotta ": " got to ", " kinda ": " kind of ", " sorta ": " sort of ", " dont ": " don't ", " doesnt ": " doesn't ", " didnt ": " didn't ", " havent ": " haven't ", " hasnt ": " hasn't ", " isnt ": " isn't ", " arent ": " aren't ", " cant ": " can't ", " couldnt ": " couldn't ", " wouldnt ": " wouldn't ", " im ": " i'm ", " ive ": " i've ", " ill ": " i'll ", " id ": " i'd ", " youre ": " you're ", " youve ": " you've ", " whats ": " what's ", " hows ": " how's ", " thats ": " that's ", " its ": " it's ", " lemme ": " let me ", " ok ": " okay ", " o2 ": " oxygen ", " sob ": " short of breath ", " pt ": " patient ", " hx ": " history ", " meds ": " medications ", " fhx ": " family history ", " pmhx ": " past medical history ", " dob ": " date of birth " };
+  for (const [k, v] of Object.entries(map)) t = t.split(k).join(v);
+  t = t.replace(/\b(um+|uh+|uhm|er+|hmm+|like|so|okay|alright|all right|well|basically|actually|just|also|next|now|then|and|great|perfect|awesome|cool|sure)\b[,.]?\s+/g, " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+function keywordIntents(t) {
+  const scores = [];
+  for (const [id, words] of Object.entries(KEYWORDS)) { let sc = 0; for (const w of words) { if ((" " + t + " ").includes(" " + w + " ") || (w.length > 6 && t.includes(w))) sc += w.includes(" ") ? 2 : 1; } if (sc) scores.push([id, sc]); }
+  scores.sort((a, b) => b[1] - a[1]);
+  return scores;
+}
 function matchIntents(text) {
-  const c = caseOf(); const t = text.toLowerCase();
+  const c = caseOf(); const raw = text.toLowerCase(); const norm = normalizeText(text);
   let ids = [];
-  for (const [id, re] of INTENTS) if (re.test(t) && !ids.includes(id)) ids.push(id);
+  for (const [id, re] of INTENTS) if ((re.test(raw) || re.test(norm)) && !ids.includes(id)) ids.push(id);
+  const t = ids.length ? raw : norm;
+  if (!ids.length) { const kw = keywordIntents(norm); if (kw.length) { const top = kw[0][1]; ids = kw.filter(x => x[1] >= Math.max(1, top - 1)).slice(0, 3).map(x => x[0]); } }
   // refinements
   if (ids.includes("all_med")) { const out = []; if (/\b(medic|medicine|drug|antibiotic|penicillin|sulfa|pill)/.test(t)) out.push("all_med"); if (/\bfood/.test(t)) out.push("all_food"); if (/season|environment|pollen|dust|pet|cat|dog|mold|grass|animal/.test(t)) out.push("all_env"); if (!out.length) out.push("all_med"); ids = ids.filter(i => i !== "all_med" && i !== "diet" && i !== "meds_rx" && i !== "drugs"); ids.push(...out); }
   if (ids.includes("gown_remove") || ids.includes("gown_regown")) ids = ids.filter(i => !["consent", "character", "alleviating", "ros_edema", "exercise", "occupation"].includes(i));
@@ -1630,6 +1733,7 @@ function matchIntents(text) {
   if (ids.includes("fh_mother") && ids.includes("fh_father") && !/mother|mom|father|dad/.test(t)) { /* parents / family history → both */ }
   if (ids.includes("smalltalk") && ids.length > 1) ids = ids.filter(i => i !== "smalltalk");
   if (ids.includes("sexual")) ids = ids.filter(i => i !== "exercise");
+  if (ids.includes("ap_explain") && /^(does|do|is|are|have|has|any|did|can|could|when|where|what|how)\b/.test(t.trim()) && !/\b(i think|my concern|recommend|plan is|ambulance|emergency|hospital|x-?ray|ekg|ecg|ct scan|antibiotic|antiviral|blood (test|work))\b/.test(t)) ids = ids.filter(i => i !== "ap_explain");
   if (ids.includes("ap_explain") && /going to (listen|check|examine|feel|look|press|take)|listen to your|i('m| am) (now )?going to/.test(t) && !/\b(i think|my concern|recommend|plan is|ambulance|emergency|hospital|x-?ray|ekg|ecg|ct scan|antibiotic|antiviral|blood (test|work))\b/.test(t)) ids = ids.filter(i => i !== "ap_explain");
   if (ids.includes("ros_pnd")) ids = ids.filter(i => i !== "ros_sob");
   if (ids.includes("pmh") && ids.includes("vitals") && !/nurse|what (was|is|did)|reading|today|your (blood pressure|bp|oxygen) (was|is)/.test(t)) ids = ids.filter(i => i !== "vitals");
@@ -2193,7 +2297,7 @@ function renderDebrief(R) {
     <div class="grid2">
       <div class="card"><h3>Encounter checklist</h3><div class="checklist" style="margin-top:8px">${R.enc.items.map(i => `<div class="ck ${i.pts >= i.max ? "ok" : i.pts > 0 ? "part" : "miss"}"><span class="m">${i.pts}/${i.max}</span><div>${esc(i.label)}${i.detail && i.pts < i.max ? `<small>${esc(i.detail)}</small>` : ""}</div></div>`).join("")}</div></div>
       <div class="card"><h3>SOAP note vs. the rubric</h3><div class="rubric" style="margin-top:8px">${R.soap.items.map(i => `<div class="rb ${i.pts >= i.max ? "full" : i.pts > 0 ? "part" : "none"}"><div>${esc(i.label)}${i.detail && i.pts < i.max ? `<small>${esc(i.detail)}</small>` : ""}</div><div class="pts">${i.pts}/${i.max}</div></div>`).join("")}</div>
-        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn" id="btnClaudeGrade" ${sampleFn ? "" : "disabled"}>Grade my note with Claude (clarity, terminology, rubric)</button><span class="muted" style="font-size:.75rem">${sampleFn ? "Uses your Claude usage; one call." : "Claude isn't available in this view."}</span></div><div id="claudeGrade" style="margin-top:8px"></div></div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center" ${HOSTED ? "hidden" : ""}><button class="btn" id="btnClaudeGrade" ${sampleFn ? "" : "disabled"}>Grade my note with Claude (clarity, terminology, rubric)</button><span class="muted" style="font-size:.75rem">${sampleFn ? "Uses your Claude usage; one call." : "Claude isn't available in this view."}</span></div><div id="claudeGrade" style="margin-top:8px"></div></div>
     </div>
     <div class="card"><details class="reveal"><summary>Model SOAP note for this patient</summary><div class="scriptblock" style="margin-top:8px">SUBJECTIVE:\n${esc(c.modelNote.S)}\n\nOBJECTIVE:\n${esc(c.modelNote.O)}\n\nASSESSMENT:\n${esc(c.modelNote.A)}\n\nPLAN:\n${esc(c.modelNote.P)}</div></details>
       <details class="reveal" style="margin-top:8px"><summary>Your note</summary><div class="scriptblock" style="margin-top:8px">${esc(noteText())}</div></details>
@@ -2223,7 +2327,16 @@ function updateStartStatus() {
   el.innerHTML = sampleFn ? '<span class="pill ok">Claude detected — all features available</span> <span class="muted" style="font-size:.78rem">Claude will ask your permission the first time the patient needs it; those calls use your own Claude usage.</span>'
     : '<span class="pill warn">Claude not available — script-only mode</span> <span class="muted" style="font-size:.78rem">Everything in the green box works. Sign in to claude.ai and reopen the link to enable the teal box.</span>';
 }
+const HOSTED = !(window.claude && window.claude.use);
 function showStartScreen() {
+  if (HOSTED) {
+    overlay(`<div class="eyebrow">Student Doctor · Clinical Skills</div><h2 style="margin:4px 0 2px">SPE Simulator</h2>
+    <p class="muted" style="margin:0 0 10px;font-size:.9rem">Eight exam rooms, timed encounters, a hallway SOAP note, and rubric grading. No account or sign-in needed — works on phone, tablet and computer.</p>
+    <div class="card" style="border-color:var(--ok)"><div class="eyebrow" style="color:var(--ok)">How it works</div><ul style="margin:6px 0 0;padding-left:18px;font-size:.84rem;line-height:1.5">
+      <li>Read the door note, sanitize, go in. Take the history by typing or by tapping 🎤 and talking (allow the microphone once).</li><li>The patient answers from a standardized-patient script and only tells you what you ask.</li><li>Exams are mini-games: place the stethoscope and your hands on the body maps; the patient reads you the finding.</li><li>Discuss your assessment and plan, check the patient understood, close properly, then write the SOAP note in the hallway.</li><li>Everything is graded against the SPE rubric: encounter checklist, exam choices, whether you caught the worst-case scenario, and the note.</li></ul></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary" id="startGo">Enter the clinic</button></div>`);
+    $("#startGo").onclick = closeOverlay; return;
+  }
   overlay(`<div class="eyebrow">Student Doctor · Clinical Skills</div><h2 style="margin:4px 0 2px">SPE Simulator</h2>
   <p class="muted" style="margin:0 0 10px;font-size:.9rem">Eight exam rooms, timed encounters, a hallway SOAP note, and rubric grading. Here's what needs a Claude sign-in and what doesn't.</p>
   <div id="startStatus" style="margin-bottom:10px"></div>
